@@ -1,0 +1,33 @@
+{
+  "version": "1.0",
+  "agents": {
+    "fixer": {
+      "weight": 1.1,
+      "wins": 1,
+      "losses": 0,
+      "contributions": ["2026-01-25: Originated jazz idea, developed Bill Evans/Tony Bennett proposal"]
+    },
+    "storyteller": {
+      "weight": 1.0,
+      "wins": 0,
+      "losses": 0,
+      "contributions": ["2026-01-25: Grounded ideas in precedent (Chet Baker, Billie Holiday)"]
+    },
+    "dr_no": {
+      "weight": 1.05,
+      "wins": 1,
+      "losses": 0,
+      "contributions": ["2026-01-25: Reversed position on jazz after Kyle's feedback, added 'sentimentality trap' condition"]
+    }
+  },
+  "sessions": [
+    {
+      "date": "2026-01-25",
+      "project": "Imposter Syndrome",
+      "question": "What sparks the relationship between Reagan and Lynch?",
+      "winning_direction": "Jazz - Bill Evans & Tony Bennett 'Some Other Time'",
+      "session_file": "sessions/2026-01-25-reagan-lynch-connection.md",
+      "notes": "Feedback loop was critical - Kyle's defense of jazz reversed Dr. No's position"
+    }
+  ]
+}

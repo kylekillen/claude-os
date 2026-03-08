@@ -9,25 +9,39 @@ Safely process large PDFs without crashing the session.
 
 ## Critical Rule
 
-Anthropic's native PDF reading handles files up to several MB. Use the Read tool for PDF files directly:
+NEVER read files over 500KB directly. Always check size first:
 
 ```bash
-# Check file size first
 ls -lh /path/to/file.pdf
 ```
 
-If the file is extremely large or the Read tool fails, extract text manually or request that the user provide a summary.
+If over 500KB, use the chunking scripts below.
+
+## Processing Scripts
+
+```bash
+# Financial PDFs (tax returns, statements, K-1s)
+python3 /Users/kylekillen/Library/CloudStorage/GoogleDrive-kyle.killen@gmail.com/My Drive/Personal-OS-v2/system/scripts/parse_tax_return.py /path/to/file.pdf
+
+# Medical PDFs (lab reports, medical records)
+python3 /Users/kylekillen/Library/CloudStorage/GoogleDrive-kyle.killen@gmail.com/My Drive/Personal-OS-v2/system/scripts/parse_health_pdf.py /path/to/file.pdf
+```
+
+These scripts:
+1. Chunk the PDF into manageable pieces
+2. Process each chunk via Haiku
+3. Return a structured summary
 
 ## Workflow
 
 1. Check file size with `ls -lh`
-2. Use Claude's native PDF reading via the Read tool
-3. Extract key information and summarize findings
-4. Report findings to the user in plain English
-5. Archive original PDFs if needed (use google-drive skill)
+2. If >500KB, use appropriate chunking script
+3. Review the output summary
+4. Archive the original PDF in Drive (use google-drive skill)
+5. Report findings to Kyle in plain English
 
 ## Rules
 
-1. Anthropic's native PDF reading is the primary method — no external scripts needed
-2. Summarize key findings rather than reproducing entire documents
-3. If Read tool fails on large files, request text extraction or a summary from the user
+1. Output is a summary, not the full document
+2. Always archive original PDFs after processing
+3. If the script fails, report the error — don't try to read the file directly

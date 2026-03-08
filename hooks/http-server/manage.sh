@@ -1,6 +1,6 @@
 #!/bin/bash
 # Manage the HTTP hooks server
-# Usage: manage.sh [start|stop|restart|status|install-launchd|uninstall-launchd]
+# Usage: manage.sh [start|stop|restart|status]
 
 SERVER_DIR="$HOME/.claude/hooks/http-server"
 PID_FILE="$SERVER_DIR/server.pid"
@@ -10,6 +10,7 @@ PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
 
 case "${1:-status}" in
     start)
+        # Check if already running
         if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
             echo "Server already running (PID $(cat "$PID_FILE"))"
             exit 0
@@ -33,6 +34,7 @@ case "${1:-status}" in
             echo "Stopped"
         else
             echo "No PID file found"
+            # Try to find and kill anyway
             pkill -f "http-server/server.py" 2>/dev/null
         fi
         ;;
@@ -44,6 +46,7 @@ case "${1:-status}" in
     status)
         if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
             echo "Running (PID $(cat "$PID_FILE"))"
+            # Test endpoint
             RESP=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:9090/hooks/PreToolUse -d '{}' 2>/dev/null)
             if [ "$RESP" = "200" ]; then
                 echo "Health: OK (HTTP 200)"
@@ -56,7 +59,6 @@ case "${1:-status}" in
         ;;
     install-launchd)
         echo "Installing launchd plist..."
-        mkdir -p "$HOME/.claude-mem/logs"
         cat > "$PLIST_PATH" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -69,15 +71,6 @@ case "${1:-status}" in
         <string>/usr/bin/python3</string>
         <string>$SERVER_DIR/server.py</string>
     </array>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PATH</key>
-        <string>$HOME/.bun/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin</string>
-        <key>HOME</key>
-        <string>$HOME</string>
-        <key>ANTHROPIC_API_KEY</key>
-        <string>${ANTHROPIC_API_KEY:-}</string>
-    </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>

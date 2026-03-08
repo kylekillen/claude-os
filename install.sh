@@ -2,15 +2,17 @@
 set -e
 
 # ════════════════════════════════════════════════
-# Claude OS Installer
-# Persistent memory + context injection for Claude Code
+# Claude OS v3 Installer
+# Markdown-first memory for Claude Code
+# Zero API cost — everything runs locally
 # ════════════════════════════════════════════════
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CLAUDE_DIR="$HOME/.claude"
 MEM_DIR="$HOME/.claude-mem"
 VENV_DIR="$MEM_DIR/venv"
-DB_PATH="$MEM_DIR/claude-mem.db"
+INDEX_DB="$MEM_DIR/markdown-index.db"
+DAEMON_DIR="$HOME/mojo-daemon"
 
 # Colors
 GREEN='\033[0;32m'
@@ -27,8 +29,8 @@ fail()  { echo -e "${RED}✗${NC} $1"; exit 1; }
 
 echo ""
 echo -e "${BOLD}════════════════════════════════════════${NC}"
-echo -e "${BOLD}       Claude OS Installer${NC}"
-echo -e "${BOLD}  Persistent Memory for Claude Code${NC}"
+echo -e "${BOLD}       Claude OS v3 Installer${NC}"
+echo -e "${BOLD}  Markdown-First Memory for Claude Code${NC}"
 echo -e "${BOLD}════════════════════════════════════════${NC}"
 echo ""
 
@@ -72,74 +74,82 @@ if [ -z "$PYTHON_CMD" ]; then
 fi
 ok "Python found: $($PYTHON_CMD --version)"
 
-# Check Anthropic API key
-if [ -z "$ANTHROPIC_API_KEY" ]; then
-    echo ""
-    warn "ANTHROPIC_API_KEY not set in environment"
-    echo "  The memory system needs an Anthropic API key to extract facts from conversations."
-    echo "  It uses Haiku (~\$0.01/session) for memory extraction."
-    echo ""
-    read -r -p "  Enter your Anthropic API key (sk-ant-...): " INPUT_KEY
-    if [ -z "$INPUT_KEY" ]; then
-        fail "API key required. Get one at: https://console.anthropic.com/settings/keys"
-    fi
-    ANTHROPIC_API_KEY="$INPUT_KEY"
-    echo ""
-
-    # Detect shell and offer to persist
-    SHELL_NAME=$(basename "$SHELL")
-    if [ "$SHELL_NAME" = "zsh" ]; then
-        RC_FILE="$HOME/.zshrc"
-    elif [ "$SHELL_NAME" = "bash" ]; then
-        RC_FILE="$HOME/.bashrc"
-    else
-        RC_FILE="$HOME/.profile"
-    fi
-
-    read -r -p "  Add ANTHROPIC_API_KEY to $RC_FILE? (y/N): " ADD_TO_RC
-    if [[ "$ADD_TO_RC" =~ ^[Yy] ]]; then
-        echo "" >> "$RC_FILE"
-        echo "# Anthropic API key (added by Claude OS installer)" >> "$RC_FILE"
-        echo "export ANTHROPIC_API_KEY=\"$ANTHROPIC_API_KEY\"" >> "$RC_FILE"
-        ok "API key added to $RC_FILE"
-    else
-        warn "Remember to set ANTHROPIC_API_KEY in your shell profile"
-    fi
+# Check sqlite3
+if command -v sqlite3 &>/dev/null; then
+    ok "SQLite3 available"
+else
+    fail "sqlite3 not found. Install it: brew install sqlite3"
 fi
-ok "Anthropic API key configured"
 
-# ── Step 3: Create directory structure ──
+# ── Step 3: AgentMail (optional) ──
+echo ""
+echo -e "${BOLD}AgentMail (optional)${NC}"
+echo "  Give your assistant its own email address (e.g., ${ASSISTANT_NAME,,}@agentmail.to)"
+echo "  Get a free API key at: https://agentmail.to"
+echo ""
+read -r -p "  AgentMail API key (am_... or press Enter to skip): " AGENTMAIL_KEY
+ASSISTANT_EMAIL=""
+if [ -n "$AGENTMAIL_KEY" ]; then
+    read -r -p "  Email address (e.g., ${ASSISTANT_NAME,,}): " ASSISTANT_EMAIL
+    ASSISTANT_EMAIL="${ASSISTANT_EMAIL:-${ASSISTANT_NAME,,}}"
+    ok "AgentMail: ${ASSISTANT_EMAIL}@agentmail.to"
+else
+    warn "No AgentMail — assistant won't have email (can add later)"
+fi
+
+# ── Step 4: Create directory structure ──
 echo ""
 echo -e "${BOLD}Setting up directories...${NC}"
 
 mkdir -p "$CLAUDE_DIR/hooks/http-server"
 mkdir -p "$CLAUDE_DIR/scripts"
 mkdir -p "$CLAUDE_DIR/skills"
+mkdir -p "$CLAUDE_DIR/agents"
 mkdir -p "$MEM_DIR/logs"
-mkdir -p "$MEM_DIR/backups"
-mkdir -p "$MEM_DIR/patterns"
+mkdir -p "$MEM_DIR/session-narratives"
+mkdir -p "$DAEMON_DIR/src"
+mkdir -p "$DAEMON_DIR/logs"
+mkdir -p "$DAEMON_DIR/state"
+mkdir -p "$DAEMON_DIR/results"
 ok "Directory structure created"
 
-# ── Step 4: Copy hooks ──
+# ── Step 5: Copy hooks ──
 echo ""
 echo -e "${BOLD}Installing hooks...${NC}"
 
 cp "$SCRIPT_DIR/hooks/http-server/server.py" "$CLAUDE_DIR/hooks/http-server/server.py"
 cp "$SCRIPT_DIR/hooks/http-server/manage.sh" "$CLAUDE_DIR/hooks/http-server/manage.sh"
 chmod +x "$CLAUDE_DIR/hooks/http-server/manage.sh"
-cp "$SCRIPT_DIR/hooks/per-turn-memory.py" "$CLAUDE_DIR/hooks/per-turn-memory.py"
-cp "$SCRIPT_DIR/hooks/pre-compact-memories.py" "$CLAUDE_DIR/hooks/pre-compact-memories.py"
+if [ -f "$SCRIPT_DIR/hooks/http-server/test-pipeline.sh" ]; then
+    cp "$SCRIPT_DIR/hooks/http-server/test-pipeline.sh" "$CLAUDE_DIR/hooks/http-server/test-pipeline.sh"
+    chmod +x "$CLAUDE_DIR/hooks/http-server/test-pipeline.sh"
+fi
+
+# Session start bridge
+cp "$SCRIPT_DIR/hooks/session-start-bridge.sh" "$CLAUDE_DIR/hooks/session-start-bridge.sh"
+chmod +x "$CLAUDE_DIR/hooks/session-start-bridge.sh"
+
+# Guard hooks (file size check, bash-cat prevention, pre-compact backup)
+for guard in check-file-size.py check-bash-cat.py pre-compact-backup.py; do
+    if [ -f "$SCRIPT_DIR/hooks/$guard" ]; then
+        cp "$SCRIPT_DIR/hooks/$guard" "$CLAUDE_DIR/hooks/$guard"
+        chmod +x "$CLAUDE_DIR/hooks/$guard"
+    fi
+done
+
 ok "Hooks installed"
 
-# ── Step 5: Copy scripts ──
+# ── Step 6: Copy scripts ──
 echo -e "${BOLD}Installing scripts...${NC}"
 
 for script in "$SCRIPT_DIR"/scripts/*.py; do
-    cp "$script" "$CLAUDE_DIR/scripts/$(basename "$script")"
+    if [ -f "$script" ]; then
+        cp "$script" "$CLAUDE_DIR/scripts/$(basename "$script")"
+    fi
 done
-ok "Scripts installed ($(ls "$SCRIPT_DIR"/scripts/*.py | wc -l | tr -d ' ') files)"
+ok "Scripts installed ($(ls "$CLAUDE_DIR/scripts/"*.py 2>/dev/null | wc -l | tr -d ' ') files)"
 
-# ── Step 6: Copy skills ──
+# ── Step 7: Copy skills ──
 echo -e "${BOLD}Installing skills...${NC}"
 
 SKILL_COUNT=0
@@ -154,7 +164,32 @@ if [ -d "$SCRIPT_DIR/skills" ]; then
 fi
 ok "Skills installed ($SKILL_COUNT skills)"
 
-# ── Step 7: Create Python venv ──
+# ── Step 8: Copy agent configs ──
+echo -e "${BOLD}Installing agent configs...${NC}"
+
+if [ -d "$SCRIPT_DIR/agents" ]; then
+    for agent_file in "$SCRIPT_DIR"/agents/*.md; do
+        if [ -f "$agent_file" ]; then
+            cp "$agent_file" "$CLAUDE_DIR/agents/$(basename "$agent_file")"
+        fi
+    done
+fi
+ok "Agent configs installed"
+
+# ── Step 9: Copy daemon scripts ──
+echo -e "${BOLD}Installing daemon scripts...${NC}"
+
+if [ -d "$SCRIPT_DIR/daemons/src" ]; then
+    for daemon_file in "$SCRIPT_DIR"/daemons/src/*; do
+        if [ -f "$daemon_file" ]; then
+            cp "$daemon_file" "$DAEMON_DIR/src/$(basename "$daemon_file")"
+            chmod +x "$DAEMON_DIR/src/$(basename "$daemon_file")"
+        fi
+    done
+fi
+ok "Daemon scripts installed"
+
+# ── Step 10: Create Python venv ──
 echo ""
 echo -e "${BOLD}Setting up Python environment...${NC}"
 info "Creating virtual environment..."
@@ -163,23 +198,46 @@ if [ ! -d "$VENV_DIR" ]; then
     "$PYTHON_CMD" -m venv "$VENV_DIR"
 fi
 
-info "Installing sentence-transformers (this may take a few minutes on first run)..."
+info "Installing dependencies (this may take a few minutes on first run)..."
 "$VENV_DIR/bin/pip" install --quiet --upgrade pip
 "$VENV_DIR/bin/pip" install --quiet sentence-transformers numpy
 ok "Python environment ready"
 
-# ── Step 8: Initialize database ──
+# ── Step 11: Download embedding model ──
 echo ""
-echo -e "${BOLD}Initializing memory database...${NC}"
+echo -e "${BOLD}Downloading embedding model (~90MB, one-time)...${NC}"
+"$VENV_DIR/bin/python" -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')" 2>/dev/null
+ok "Embedding model ready"
 
-if [ -f "$DB_PATH" ]; then
-    warn "Database already exists at $DB_PATH — skipping initialization"
+# ── Step 12: Initialize markdown index database ──
+echo ""
+echo -e "${BOLD}Initializing markdown index...${NC}"
+
+if [ -f "$INDEX_DB" ]; then
+    warn "Index database already exists at $INDEX_DB — skipping initialization"
 else
-    sqlite3 "$DB_PATH" < "$SCRIPT_DIR/schema/init.sql"
-    ok "Database initialized with full schema"
+    sqlite3 "$INDEX_DB" < "$SCRIPT_DIR/schema/init.sql"
+    ok "Markdown index initialized"
 fi
 
-# ── Step 9: Configure settings.local.json ──
+# Create empty persistent files
+touch "$MEM_DIR/decisions.md"
+touch "$MEM_DIR/errors.log"
+touch "$MEM_DIR/last-session.md"
+
+# ── Step 13: Save API keys ──
+echo ""
+echo -e "${BOLD}Saving configuration...${NC}"
+
+# Create .env.tools for AgentMail
+if [ -n "$AGENTMAIL_KEY" ]; then
+    cat > "$CLAUDE_DIR/.env.tools" << EOF
+AGENTMAIL_API_KEY=$AGENTMAIL_KEY
+EOF
+    ok "AgentMail API key saved"
+fi
+
+# ── Step 14: Configure settings.local.json ──
 echo ""
 echo -e "${BOLD}Configuring Claude Code hooks...${NC}"
 
@@ -188,17 +246,55 @@ if [ -f "$SETTINGS_FILE" ]; then
     warn "settings.local.json already exists"
     read -r -p "  Overwrite with Claude OS hook configuration? (y/N): " OVERWRITE
     if [[ ! "$OVERWRITE" =~ ^[Yy] ]]; then
-        warn "Skipped — you may need to manually add hook URLs to your settings"
+        warn "Skipped — you may need to manually merge hook URLs"
     else
-        cp "$SCRIPT_DIR/templates/settings.local.json.tmpl" "$SETTINGS_FILE"
+        sed "s|{{HOME}}|$HOME|g" "$SCRIPT_DIR/templates/settings.local.json.tmpl" > "$SETTINGS_FILE"
         ok "Hook configuration written"
     fi
 else
-    cp "$SCRIPT_DIR/templates/settings.local.json.tmpl" "$SETTINGS_FILE"
+    sed "s|{{HOME}}|$HOME|g" "$SCRIPT_DIR/templates/settings.local.json.tmpl" > "$SETTINGS_FILE"
     ok "Hook configuration written"
 fi
 
-# ── Step 10: Write CLAUDE.md ──
+# ── Step 15: Configure settings.json (MCP servers) ──
+echo ""
+echo -e "${BOLD}Configuring MCP servers...${NC}"
+
+SETTINGS_JSON="$CLAUDE_DIR/settings.json"
+if [ -f "$SETTINGS_JSON" ]; then
+    warn "settings.json already exists — not overwriting"
+    info "You can manually add MCP servers later"
+else
+    if [ -n "$AGENTMAIL_KEY" ]; then
+        cat > "$SETTINGS_JSON" << SETTINGSEOF
+{
+  "env": {
+    "AGENTMAIL_API_KEY": "$AGENTMAIL_KEY"
+  },
+  "mcpServers": {
+    "agentmail": {
+      "command": "npx",
+      "args": ["-y", "agentmail-mcp"],
+      "env": {
+        "AGENTMAIL_API_KEY": "$AGENTMAIL_KEY"
+      }
+    }
+  }
+}
+SETTINGSEOF
+        ok "settings.json created with AgentMail MCP"
+    else
+        cat > "$SETTINGS_JSON" << SETTINGSEOF
+{
+  "env": {},
+  "mcpServers": {}
+}
+SETTINGSEOF
+        ok "settings.json created (empty — add MCP servers as needed)"
+    fi
+fi
+
+# ── Step 16: Write CLAUDE.md ──
 echo ""
 echo -e "${BOLD}Writing assistant instructions...${NC}"
 
@@ -209,41 +305,69 @@ if [ -f "$CLAUDE_MD" ] && [ -s "$CLAUDE_MD" ]; then
     if [[ ! "$OVERWRITE_MD" =~ ^[Yy] ]]; then
         warn "Skipped"
     else
-        sed "s/{{ASSISTANT_NAME}}/$ASSISTANT_NAME/g" "$SCRIPT_DIR/templates/CLAUDE.md.template" > "$CLAUDE_MD"
+        sed -e "s/{{ASSISTANT_NAME}}/$ASSISTANT_NAME/g" \
+            -e "s/{{ASSISTANT_EMAIL}}/$ASSISTANT_EMAIL/g" \
+            "$SCRIPT_DIR/templates/CLAUDE.md.template" > "$CLAUDE_MD"
         ok "CLAUDE.md written for $ASSISTANT_NAME"
     fi
 else
-    sed "s/{{ASSISTANT_NAME}}/$ASSISTANT_NAME/g" "$SCRIPT_DIR/templates/CLAUDE.md.template" > "$CLAUDE_MD"
+    sed -e "s/{{ASSISTANT_NAME}}/$ASSISTANT_NAME/g" \
+        -e "s/{{ASSISTANT_EMAIL}}/$ASSISTANT_EMAIL/g" \
+        "$SCRIPT_DIR/templates/CLAUDE.md.template" > "$CLAUDE_MD"
     ok "CLAUDE.md written for $ASSISTANT_NAME"
 fi
 
-# ── Step 11: Download embedding model ──
-echo ""
-echo -e "${BOLD}Downloading embedding model (~90MB, one-time)...${NC}"
-"$VENV_DIR/bin/python" -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')" 2>/dev/null
-ok "Embedding model ready"
-
-# ── Step 12: Start hooks server (macOS) ──
+# ── Step 17: Install launchd daemon (macOS) ──
 echo ""
 echo -e "${BOLD}Starting memory hooks server...${NC}"
 
 if [[ "$OSTYPE" == "darwin"* ]]; then
-    # Export API key for launchd
-    export ANTHROPIC_API_KEY
-    bash "$CLAUDE_DIR/hooks/http-server/manage.sh" install-launchd
+    PLIST_NAME="com.claude-os.http-hooks-server"
+    PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
+
+    cat > "$PLIST_PATH" << PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$PLIST_NAME</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$VENV_DIR/bin/python</string>
+        <string>$CLAUDE_DIR/hooks/http-server/server.py</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>$MEM_DIR/logs/http-hooks-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>$MEM_DIR/logs/http-hooks-stderr.log</string>
+    <key>WorkingDirectory</key>
+    <string>$CLAUDE_DIR/hooks/http-server</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTORCH_MPS_DISABLE</key>
+        <string>1</string>
+    </dict>
+</dict>
+</plist>
+PLIST
+
+    launchctl load "$PLIST_PATH" 2>/dev/null || true
     ok "Hooks server installed as launchd daemon (auto-starts on login)"
 else
-    # Linux: start manually (user can set up systemd)
-    bash "$CLAUDE_DIR/hooks/http-server/manage.sh" start
-    ok "Hooks server started"
-    warn "For auto-start on Linux, create a systemd unit or add to ~/.profile"
+    info "Linux detected — start manually: ~/.claude/hooks/http-server/manage.sh start"
+    warn "For auto-start, create a systemd unit"
 fi
 
-# ── Step 13: Verify ──
+# ── Step 18: Verify ──
 echo ""
 echo -e "${BOLD}Verifying installation...${NC}"
 
-sleep 2
+sleep 3
 
 # Test hooks server
 RESP=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:9090/hooks/PreToolUse -d '{}' 2>/dev/null || echo "failed")
@@ -251,14 +375,13 @@ if [ "$RESP" = "200" ]; then
     ok "Hooks server responding (HTTP 200)"
 else
     warn "Hooks server not responding yet (HTTP $RESP) — it may need a moment to start"
+    info "Check logs: tail -f $MEM_DIR/logs/http-hooks-stderr.log"
 fi
 
 # Test database
-TABLE_COUNT=$(sqlite3 "$DB_PATH" "SELECT count(*) FROM sqlite_master WHERE type='table';" 2>/dev/null || echo "0")
-if [ "$TABLE_COUNT" -gt 5 ]; then
-    ok "Database healthy ($TABLE_COUNT tables)"
-else
-    warn "Database may not be fully initialized"
+if [ -f "$INDEX_DB" ]; then
+    TABLE_COUNT=$(sqlite3 "$INDEX_DB" "SELECT count(*) FROM sqlite_master WHERE type='table';" 2>/dev/null || echo "0")
+    ok "Markdown index healthy ($TABLE_COUNT tables)"
 fi
 
 # Test venv
@@ -271,28 +394,36 @@ fi
 # ── Done ──
 echo ""
 echo -e "${BOLD}════════════════════════════════════════${NC}"
-echo -e "${GREEN}${BOLD}  Claude OS installed successfully!${NC}"
+echo -e "${GREEN}${BOLD}  Claude OS v3 installed successfully!${NC}"
 echo -e "${BOLD}════════════════════════════════════════${NC}"
 echo ""
 echo "  Your assistant: ${BOLD}${ASSISTANT_NAME}${NC}"
+if [ -n "$ASSISTANT_EMAIL" ]; then
+    echo "  Email: ${BOLD}${ASSISTANT_EMAIL}@agentmail.to${NC}"
+fi
 echo ""
 echo "  What was installed:"
-echo "    ${BLUE}~/.claude/hooks/${NC}     — Hook scripts (memory extraction)"
-echo "    ${BLUE}~/.claude/scripts/${NC}   — Memory pipeline scripts"
-echo "    ${BLUE}~/.claude/skills/${NC}    — $SKILL_COUNT portable skills"
-echo "    ${BLUE}~/.claude-mem/${NC}       — Memory database + embeddings"
+echo "    ${BLUE}~/.claude/hooks/${NC}      — Hook server (HTTP on port 9090)"
+echo "    ${BLUE}~/.claude/scripts/${NC}    — Search engine, narrative extraction, compound loop"
+echo "    ${BLUE}~/.claude/skills/${NC}     — $SKILL_COUNT skills (pdf, research, design, etc.)"
+echo "    ${BLUE}~/.claude-mem/${NC}        — Markdown index + Python venv + embeddings"
+echo "    ${BLUE}~/mojo-daemon/${NC}        — Autonomous task daemon"
 echo ""
-echo "  How it works:"
-echo "    Every conversation → facts extracted by Haiku → stored in SQLite"
-echo "    Every new prompt → relevant memories retrieved → injected as context"
-echo "    Cost: ~\$0.01 per session (Haiku API calls)"
+echo "  How memory works (v3 — zero API cost):"
+echo "    Every prompt       → markdown index searched (FTS5 + semantic) → context injected"
+echo "    Session end        → narratives extracted from transcript → index rebuilt"
+echo "    Session start      → previous session narrative + daily logs loaded"
+echo "    Anthropic built-in → MEMORY.md updated organically by Claude"
+echo ""
+echo "  No LLM extraction. No API calls. Memory comes from your markdown files."
 echo ""
 echo "  Next steps:"
-echo "    1. Open a new terminal (to pick up API key)"
-echo "    2. Run: ${BOLD}claude${NC}"
-echo "    3. Start talking — memory builds automatically"
+echo "    1. Run: ${BOLD}claude${NC}"
+echo "    2. Start talking — memory builds automatically"
+echo "    3. Ask your assistant to install more capabilities from ~/.claude/skills/install/"
 echo ""
 echo "  Management:"
-echo "    ${BOLD}~/.claude/hooks/http-server/manage.sh status${NC}  — Check server"
-echo "    ${BOLD}~/.claude/hooks/http-server/manage.sh restart${NC} — Restart server"
+echo "    ${BOLD}~/.claude/hooks/http-server/manage.sh status${NC}   — Check server"
+echo "    ${BOLD}~/.claude/hooks/http-server/manage.sh restart${NC}  — Restart server"
+echo "    ${BOLD}tail -f ~/.claude-mem/logs/http-hooks-stderr.log${NC} — View logs"
 echo ""

@@ -1,36 +1,20 @@
-# Claude OS
+# Claude OS v3
 
-Persistent memory and context injection for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Claude OS gives Claude long-term memory that persists across sessions, so it remembers your preferences, past decisions, project context, and anything else worth keeping.
+Markdown-first memory, 70+ skills, and autonomous operation for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Zero API cost — memory comes from indexing your own markdown files.
 
 ## How It Works
 
 ```
-You talk to Claude ──→ Facts extracted by Haiku ──→ Stored in SQLite
-                                                          │
-Next session starts ──→ Relevant memories retrieved ──→ Injected as context
+You write markdown docs ──→ Indexed (FTS5 + semantic embeddings) ──→ Stored in SQLite
+                                                                          │
+Every prompt ──→ Hybrid search (keyword 40% + semantic 60%) ──→ Top 15 chunks injected
+                 + domain boosting + feedback loop + access tracking
+                                                                          │
+Session ends ──→ Narratives extracted from transcript ──→ Index rebuilt
+Session starts ──→ Previous narrative + daily logs loaded ──→ Continuity
 ```
 
-**Cost:** ~$0.01 per session (Haiku API calls for memory extraction).
-
-## What Gets Installed
-
-```
-~/.claude/
-├── hooks/                  # Hook scripts (HTTP server + memory extraction)
-│   ├── http-server/        # Persistent server handling all hook events
-│   ├── per-turn-memory.py  # Mem0-style two-pass fact extraction
-│   └── pre-compact-*.py    # Pre-compaction memory capture
-├── scripts/                # Memory pipeline (search, embeddings, decay)
-├── skills/                 # 22+ portable skills (pdf, docx, research, etc.)
-├── CLAUDE.md               # Your assistant's personality and instructions
-└── settings.local.json     # Hook configuration
-
-~/.claude-mem/
-├── claude-mem.db           # SQLite database (FTS5 + vector embeddings)
-├── venv/                   # Python environment (sentence-transformers)
-├── logs/                   # Pipeline logs
-└── backups/                # Transcript backups
-```
+**Memory cost:** $0. No LLM extraction. No API calls. Just your markdown files indexed locally with sentence-transformers.
 
 ## Install
 
@@ -38,12 +22,11 @@ Next session starts ──→ Relevant memories retrieved ──→ Injected as 
 
 - **Claude Code** — [Install guide](https://docs.anthropic.com/en/docs/claude-code/getting-started)
 - **Python 3.10+** — `brew install python@3.13` or [python.org](https://python.org)
-- **Anthropic API key** — [Get one here](https://console.anthropic.com/settings/keys)
 
 ### One Command
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/claude-os.git
+git clone https://github.com/kylekillen/claude-os.git
 cd claude-os
 ./install.sh
 ```
@@ -51,137 +34,132 @@ cd claude-os
 The installer will:
 1. Ask you to name your AI assistant
 2. Check prerequisites
-3. Set up hooks, scripts, and skills
-4. Create a Python venv with sentence-transformers
-5. Initialize the memory database
-6. Start the hooks server as a launchd daemon (macOS)
-7. Verify everything works
+3. Optionally set up AgentMail (your assistant's own email)
+4. Install hooks, scripts, and 70+ skills
+5. Create a Python venv with sentence-transformers
+6. Initialize the markdown index database
+7. Start the hooks server (macOS launchd or manual)
+8. Verify everything works
 
-## Memory System
+## What Gets Installed
 
-### Mem0-Style Two-Pass Pipeline
+```
+~/.claude/
+├── hooks/                  # Hook server (persistent HTTP on port 9090)
+│   ├── http-server/        # server.py — handles all lifecycle events
+│   └── session-start-*.sh  # SessionStart → HTTP bridge
+├── scripts/                # Search engine, narrative extraction, compound loop
+├── skills/                 # 70+ skills (pdf, docx, research, design, etc.)
+│   └── install/            # Additional capabilities to install on-demand
+├── agents/                 # Agent team configurations
+├── CLAUDE.md               # Your assistant's personality and instructions
+└── settings.local.json     # Hook configuration
 
-Every conversation turn:
-1. **Extract** — Haiku reads the exchange and extracts knowledge facts
-2. **Search** — Each fact is compared against existing memories via FTS5
-3. **Decide** — Haiku determines: ADD new / UPDATE existing / DELETE wrong / NONE
-4. **Execute** — Decisions are applied to the memories table
+~/.claude-mem/
+├── markdown-index.db       # SQLite: chunks + FTS5 + embeddings + search_log
+├── venv/                   # Python environment (sentence-transformers)
+├── decisions.md            # Persistent decisions (loaded every SessionStart)
+├── last-session.md         # Previous session narrative
+├── session-narratives/     # Archive of session summaries
+└── logs/                   # Server logs
 
-This prevents duplicate memories and keeps the knowledge base clean.
-
-### What Gets Remembered
-
-- Decisions and preferences you express
-- Technical discoveries and constraints
-- Project status and milestones
-- Corrections to wrong assumptions
-- Workflow patterns
-
-### Managing Memories
-
-```bash
-# List all memories
-~/.claude-mem/venv/bin/python ~/.claude/scripts/mem0-processor.py --list
-
-# Search memories
-~/.claude-mem/venv/bin/python ~/.claude/scripts/mem0-processor.py --search "project name"
-
-# Statistics
-~/.claude-mem/venv/bin/python ~/.claude/scripts/mem0-processor.py --stats
+~/mojo-daemon/              # Autonomous task daemon
+├── src/                    # Heartbeat scripts
+├── logs/                   # Daemon logs
+└── state/                  # Task state
 ```
 
-## Skills
+## Memory System (v3)
 
-22+ portable skills are included. Use them by name in conversation:
+### Markdown-First — No LLM Extraction
 
-| Skill | What It Does |
+v3 eliminated all LLM-based memory extraction. Instead:
+
+1. **You write markdown files** — notes, decisions, status docs, MEMORY.md
+2. **markdown-search.py indexes them** — chunks at `## ` headers, embeds with all-MiniLM-L6-v2
+3. **server.py searches on every prompt** — FTS5 + cosine similarity, top 15 injected as context
+
+That's it. Write things down → they become searchable memory. Zero API cost.
+
+### Three Scoring Layers
+
+| Layer | What | How |
+|-------|------|-----|
+| **Domain boost** | Chunks tagged by file path (trading, financial, health...). Query keywords detect domain. Matching chunks: 1.4x | Automatic |
+| **Feedback boost** | Search history analysis. Domain-specific chunks boosted, noisy ones penalized | Self-improving (needs 30+ searches) |
+| **Access boost** | Previously-returned chunks get mild boost | Automatic |
+
+### Session Lifecycle
+
+| Event | What Happens |
 |-------|-------------|
-| `pdf` | Read, merge, split, create PDFs |
-| `docx` | Read, edit, create Word documents |
-| `pptx` | Create/edit PowerPoint presentations |
-| `xlsx` | Read, edit, create Excel files |
-| `research` | Structured web research with source verification |
-| `first-principles` | Systematic problem decomposition |
-| `frontend-design` | Production-grade UI design |
-| `canvas-design` | Visual art and poster design |
-| `algorithmic-art` | Generative art with p5.js |
-| `doc-coauthoring` | Collaborative document writing workflow |
+| **SessionStart** | Load: previous session narrative, persistent decisions, recent errors, daily logs, pending webhook events |
+| **UserPromptSubmit** | Detect domain → search markdown index → inject top 15 chunks |
+| **PreCompact** | Backup transcript, flush key decisions to daily log |
+| **Stop** | Extract narratives → run compound loop → rebuild markdown index |
 
-### Install Skills
+### Key Scripts
 
-Additional capabilities can be installed from `~/.claude/skills/install/`:
+| Script | Role |
+|--------|------|
+| `markdown-search.py` | Indexer + search engine. Chunks .md files, embeds, searches |
+| `extract-narratives.py` | Pulls compaction summaries from .jsonl transcripts |
+| `compound-loop.py` | Extracts failure patterns, generates preventive rules |
+| `query-context.py` | Standalone search fallback (CLI) |
 
-```
-voice-transcription  — Local Whisper speech-to-text
-markitdown           — Universal file → Markdown converter
-supabase-mcp         — Supabase database tools
-sqlite-mcp           — SQLite database tools
-context7             — Live API documentation
-```
+### Performance
+
+| Metric | Value |
+|--------|-------|
+| Search latency | ~50-100ms (model cached in server process) |
+| Model memory | ~400MB (all-MiniLM-L6-v2, CPU) |
+| Index size | ~15MB |
+| Context per prompt | ~3-4K tokens (15 chunks) |
+| Reindex (incremental) | ~5-30s |
+
+## Skills (70+)
+
+### Document Skills
+`pdf` · `docx` · `pptx` · `xlsx`
+
+### Research & Thinking
+`research` · `first-principles` · `algorithm`
+
+### Design & Development
+`frontend-design` · `canvas-design` · `brand-guidelines` · `theme-factory` · `mcp-builder` · `web-artifacts-builder`
+
+### Content & Marketing
+`copywriting` · `content-strategy` · `seo-audit` · `email-sequence` · `social-content` · `ad-creative`
+
+### Install-on-Demand
+Available in `~/.claude/skills/install/`:
+`voice-transcription` · `markitdown` · `supabase-mcp` · `sqlite-mcp` · `context7` · `google-calendar` · `google-drive` · `telegram-swarm` · `ntfy`
+
+## AgentMail
+
+Your assistant can have its own email address (e.g., `assistant@agentmail.to`). Set up during install or add later via [agentmail.to](https://agentmail.to).
 
 ## Server Management
 
 ```bash
-# Check status
-~/.claude/hooks/http-server/manage.sh status
-
-# Restart
-~/.claude/hooks/http-server/manage.sh restart
-
-# View logs
-tail -f ~/.claude-mem/logs/http-hooks-server.log
-tail -f ~/.claude-mem/logs/per-turn-memory.log
+~/.claude/hooks/http-server/manage.sh status    # Check
+~/.claude/hooks/http-server/manage.sh restart   # Restart
+tail -f ~/.claude-mem/logs/http-hooks-stderr.log # Logs
 ```
-
-## Customization
-
-### Adding MCP Servers
-
-Edit `~/.claude/settings.local.json` and add to the `mcpServers` key:
-
-```json
-{
-  "mcpServers": {
-    "my-server": {
-      "command": "npx",
-      "args": ["-y", "my-mcp-server"],
-      "env": { "API_KEY": "..." }
-    }
-  }
-}
-```
-
-### Adding Custom Skills
-
-Create a directory in `~/.claude/skills/my-skill/` with a `SKILL.md` file:
-
-```markdown
----
-name: my-skill
-description: What this skill does
----
-
-Instructions for Claude when this skill is invoked...
-```
-
-### Modifying the Assistant
-
-Edit `~/.claude/CLAUDE.md` to change personality, instructions, and behavior.
 
 ## Uninstall
 
 ```bash
-cd claude-os
-./uninstall.sh
+cd claude-os && ./uninstall.sh
 ```
-
-This removes all Claude OS files but preserves Claude Code itself.
 
 ## Architecture
 
-The system uses a single persistent HTTP server (stdlib only, zero dependencies) that handles all six Claude Code hook events in 1-5ms per call. This replaces what would otherwise be 14+ Python process spawns per hook event.
+Single persistent HTTP server (stdlib only) on port 9090 handles all six Claude Code hook events in 1-5ms. Memory search runs inline on every UserPromptSubmit — no subprocess spawning. The embedding model (all-MiniLM-L6-v2, 384-dim) is loaded once and cached in server memory (~400MB).
 
-The memory database uses SQLite with FTS5 full-text search and 384-dimensional sentence-transformer embeddings for hybrid retrieval. Observations are scored with exponential attention decay, and low-value entries are automatically consolidated.
+The markdown index uses SQLite with FTS5 for keyword search and pre-computed embeddings for semantic search. Files are chunked at `## ` headers. A search_log table tracks every query for feedback-based scoring.
+
+Session continuity comes from extracted narrative summaries (pulled from transcript compaction points) and append-only daily logs (OpenClaw pattern).
 
 ## License
 

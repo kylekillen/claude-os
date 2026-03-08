@@ -1,83 +1,74 @@
 #!/bin/bash
-# Claude OS Uninstaller
-# Removes hooks, scripts, skills, memory database, and launchd daemon
+set -e
 
 RED='\033[0;31m'
-YELLOW='\033[1;33m'
 GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
 BOLD='\033[1m'
 NC='\033[0m'
 
 echo ""
 echo -e "${BOLD}Claude OS Uninstaller${NC}"
 echo ""
-echo -e "${YELLOW}This will remove:${NC}"
-echo "  ~/.claude/hooks/          — Hook scripts"
-echo "  ~/.claude/scripts/        — Memory pipeline scripts"
-echo "  ~/.claude/skills/         — Installed skills"
-echo "  ~/.claude/CLAUDE.md       — Assistant instructions"
-echo "  ~/.claude-mem/            — Memory database, embeddings, logs"
-echo "  LaunchAgent daemon        — com.claude-os.http-hooks-server"
-echo ""
-echo -e "${RED}${BOLD}This will permanently delete your memory database.${NC}"
-read -r -p "Are you sure? (type 'yes' to confirm): " CONFIRM
 
-if [ "$CONFIRM" != "yes" ]; then
+read -r -p "Remove all Claude OS files? This will delete memories, hooks, and skills. (y/N): " CONFIRM
+if [[ ! "$CONFIRM" =~ ^[Yy] ]]; then
     echo "Cancelled."
     exit 0
 fi
 
-echo ""
+# Stop launchd daemons
+echo "Stopping services..."
+for plist in "$HOME/Library/LaunchAgents/com.claude-os."*".plist"; do
+    if [ -f "$plist" ]; then
+        launchctl unload "$plist" 2>/dev/null
+        rm -f "$plist"
+        echo -e "${GREEN}✓${NC} Removed $(basename "$plist")"
+    fi
+done
 
-# Stop and uninstall launchd daemon
-PLIST_PATH="$HOME/Library/LaunchAgents/com.claude-os.http-hooks-server.plist"
-if [ -f "$PLIST_PATH" ]; then
-    launchctl unload "$PLIST_PATH" 2>/dev/null
-    rm -f "$PLIST_PATH"
-    echo -e "${GREEN}✓${NC} LaunchAgent removed"
-fi
+# Kill server process
+pkill -f "http-server/server.py" 2>/dev/null || true
 
-# Kill any running server
-pkill -f "http-server/server.py" 2>/dev/null
+# Remove Claude OS files
+echo "Removing files..."
 
-# Remove hooks
-if [ -d "$HOME/.claude/hooks" ]; then
-    rm -rf "$HOME/.claude/hooks"
-    echo -e "${GREEN}✓${NC} Hooks removed"
-fi
+rm -rf "$HOME/.claude/hooks"
+echo -e "${GREEN}✓${NC} Removed hooks"
 
-# Remove scripts
-if [ -d "$HOME/.claude/scripts" ]; then
-    rm -rf "$HOME/.claude/scripts"
-    echo -e "${GREEN}✓${NC} Scripts removed"
-fi
+rm -rf "$HOME/.claude/scripts"
+echo -e "${GREEN}✓${NC} Removed scripts"
 
-# Remove skills
-if [ -d "$HOME/.claude/skills" ]; then
-    rm -rf "$HOME/.claude/skills"
-    echo -e "${GREEN}✓${NC} Skills removed"
-fi
+rm -rf "$HOME/.claude/skills"
+echo -e "${GREEN}✓${NC} Removed skills"
 
-# Remove CLAUDE.md
-if [ -f "$HOME/.claude/CLAUDE.md" ]; then
-    rm -f "$HOME/.claude/CLAUDE.md"
-    echo -e "${GREEN}✓${NC} CLAUDE.md removed"
-fi
+rm -rf "$HOME/.claude/agents"
+echo -e "${GREEN}✓${NC} Removed agents"
 
-# Remove memory directory
-if [ -d "$HOME/.claude-mem" ]; then
+# Remove memory system
+read -r -p "Also remove memory database and Python venv (~1.7GB)? (y/N): " REMOVE_MEM
+if [[ "$REMOVE_MEM" =~ ^[Yy] ]]; then
     rm -rf "$HOME/.claude-mem"
-    echo -e "${GREEN}✓${NC} Memory database and logs removed"
+    echo -e "${GREEN}✓${NC} Removed memory system"
 fi
 
-# Remove settings hooks (but preserve the file)
+# Remove daemon
+read -r -p "Remove daemon scripts? (y/N): " REMOVE_DAEMON
+if [[ "$REMOVE_DAEMON" =~ ^[Yy] ]]; then
+    rm -rf "$HOME/mojo-daemon"
+    echo -e "${GREEN}✓${NC} Removed daemon"
+fi
+
+# Clean settings
 if [ -f "$HOME/.claude/settings.local.json" ]; then
-    echo -e "${YELLOW}!${NC} settings.local.json preserved (may contain other config)"
-    echo "  Remove hooks manually if needed: ~/.claude/settings.local.json"
+    read -r -p "Remove settings.local.json (hook config)? (y/N): " REMOVE_SETTINGS
+    if [[ "$REMOVE_SETTINGS" =~ ^[Yy] ]]; then
+        rm -f "$HOME/.claude/settings.local.json"
+        echo -e "${GREEN}✓${NC} Removed hook settings"
+    fi
 fi
 
 echo ""
 echo -e "${GREEN}${BOLD}Claude OS uninstalled.${NC}"
-echo "  Claude Code itself is not affected."
-echo "  To reinstall: ./install.sh"
+echo "Claude Code itself is preserved — you can still use 'claude' normally."
 echo ""

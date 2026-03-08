@@ -5,8 +5,8 @@
         "matcher": "",
         "hooks": [
           {
-            "type": "http",
-            "url": "http://127.0.0.1:9090/hooks/SessionStart",
+            "type": "command",
+            "command": "{{HOME}}/.claude/hooks/session-start-bridge.sh",
             "timeout": 120
           }
         ]
@@ -25,6 +25,24 @@
       }
     ],
     "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{HOME}}/.claude/hooks/check-file-size.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{HOME}}/.claude/hooks/check-bash-cat.py"
+          }
+        ]
+      },
       {
         "matcher": "Read|Bash",
         "hooks": [
@@ -53,9 +71,19 @@
         "matcher": "",
         "hooks": [
           {
+            "type": "command",
+            "command": "{{HOME}}/.claude/hooks/pre-compact-backup.py",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
             "type": "http",
             "url": "http://127.0.0.1:9090/hooks/PreCompact",
-            "timeout": 60
+            "timeout": 120
           }
         ]
       }
@@ -75,10 +103,16 @@
   },
   "permissions": {
     "allow": [
-      "Bash(git status:*)",
-      "Bash(git diff:*)",
-      "Bash(git log:*)",
-      "Read(*)"
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "WebSearch",
+      "WebFetch",
+      "Skill",
+      "mcp__*",
+      "Bash(*)"
     ]
   }
 }

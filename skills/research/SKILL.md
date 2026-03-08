@@ -87,7 +87,7 @@ If a URL fails, either find an alternative or note "source exists but URL unveri
 After completing research, save the full output as a markdown file:
 
 ```
-~/Documents/research/[topic]-research.md
+/Users/kylekillen/Library/CloudStorage/GoogleDrive-kyle.killen@gmail.com/My Drive/Personal-OS-v2/drafts/research-complete/[topic]-research.md
 ```
 
 **Filename:** Use kebab-case topic name (e.g., `macbook-upgrade-research.md`, `fitbit-api-research.md`)
